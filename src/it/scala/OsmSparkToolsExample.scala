@@ -25,5 +25,7 @@ object OsmSparkToolsExample {
     val merged = Merge(osmFiles)
 
     println(s"Merged osm data bbox: ${BoundBox.findBBox(merged)}")
+
+
   }
 }

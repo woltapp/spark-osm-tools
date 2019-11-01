@@ -1,11 +1,11 @@
 package org.akashihi.osm.spark
 
-import org.akashihi.osm.parallelpbf.entity.BoundBox
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
+import org.locationtech.jts.geom.Envelope
 
 object BoundBox {
-  def findBBox(osm: DataFrame): BoundBox = {
+  def findBBox(osm: DataFrame): Envelope = {
     val bounds = osm.filter(col("LON").isNotNull.and(col("LAT").isNotNull))
       .select("LON", "LAT", "TYPE")
       .groupBy("TYPE")
@@ -19,6 +19,6 @@ object BoundBox {
     val top = bounds.getAs[Double]("MAX_LON")
     val right = bounds.getAs[Double]("MAX_LAT")
     val bottom = bounds.getAs[Double]("MIN_LON")
-    new BoundBox(left, top, right, bottom)
+    new Envelope(left, right, bottom, top)
   }
 }
