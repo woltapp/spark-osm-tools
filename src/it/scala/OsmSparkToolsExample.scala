@@ -1,6 +1,7 @@
-import org.akashihi.osm.spark.{BoundBox, Merge}
 import org.akashihi.osm.spark.OsmSource.OsmSource
+import org.akashihi.osm.spark.{BoundBox, Extract, Merge}
 import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel
 
 object OsmSparkToolsExample {
@@ -8,7 +9,7 @@ object OsmSparkToolsExample {
     val spark = SparkSession
       .builder()
       .appName("OsmSparkTools")
-      .config("spark.master", "local[4]")
+      .config("spark.master", "local[24]")
       .config("spark.executor.memory", "4gb")
       .getOrCreate()
 
@@ -22,10 +23,12 @@ object OsmSparkToolsExample {
     println("Input files bboxes:")
     osmFiles.map(BoundBox.findBBox).foreach(println)
 
-    val merged = Merge(osmFiles)
+    val merged = Merge(osmFiles).persist(StorageLevel.MEMORY_AND_DISK)
 
     println(s"Merged osm data bbox: ${BoundBox.findBBox(merged)}")
 
+    val extracted = Extract(spark, merged, 16.578809,49.212551, 16.595750, 49.205591)
 
+    println(s"Extracted osm data bbox: ${BoundBox.findBBox(extracted)}")
   }
 }
