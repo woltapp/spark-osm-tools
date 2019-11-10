@@ -5,15 +5,9 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel
 
 object OsmSparkToolsExample {
-  def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder()
-      .appName("OsmSparkTools")
-      .config("spark.master", "local[24]")
-      .config("spark.executor.memory", "4gb")
-      .getOrCreate()
 
-    val osmFiles = args(0).split(",").map(filename => spark.read
+  def merge(sources: String, output: String, spark: SparkSession):Unit = {
+    val osmFiles = sources.split(",").map(filename => spark.read
       .option("threads", 6)
       .option("partitions", 8)
       .format(OsmSource.OSM_SOURCE_NAME)
@@ -24,11 +18,33 @@ object OsmSparkToolsExample {
     osmFiles.map(BoundBox.findBBox).foreach(println)
 
     val merged = Merge(osmFiles).persist(StorageLevel.MEMORY_AND_DISK)
-
     println(s"Merged osm data bbox: ${BoundBox.findBBox(merged)}")
 
-    val extracted = Extract(spark, merged, 16.578809,49.212551, 16.595750, 49.205591)
+    merged.write.parquet(output)
+  }
 
+  def extract(source: String, output: String, spark: SparkSession): Unit = {
+    val osm = spark.read
+        .parquet(source)
+      .persist(StorageLevel.MEMORY_AND_DISK)
+
+    val extracted = Extract(osm, 16.578809,49.212551, 16.595750, 49.205591, Extract.ParentRelations, spark)
+      .persist(StorageLevel.MEMORY_AND_DISK)
     println(s"Extracted osm data bbox: ${BoundBox.findBBox(extracted)}")
+
+    extracted.write.mode(SaveMode.Overwrite).parquet(output)
+  }
+
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession
+      .builder()
+      .appName("OsmSparkTools")
+      .config("spark.master", "local[12]")
+      .config("spark.executor.memory", "8gb")
+      .getOrCreate()
+
+    //merge(args(0), "/tmp/czech_cities", spark)
+
+    extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
   }
 }
