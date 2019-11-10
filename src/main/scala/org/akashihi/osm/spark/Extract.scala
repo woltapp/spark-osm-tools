@@ -15,9 +15,6 @@ object Extract {
   case object ReferenceComplete extends ExtractPolicy
   case object ParentRelations extends ExtractPolicy
 
-  private def valueInArray(array: mutable.WrappedArray[Long], value: Long): Boolean = array != null && array.contains(value)
-  private def valueInArrayUdf = udf(valueInArray _)
-
   /**
    * Extracts relation member IDs with the specified from the list of all the relation members.
    *
@@ -62,16 +59,14 @@ object Extract {
     case OsmEntity.WAY => ways.getOrElse(id, Seq[Long]())
   }
 
-  def extract(spark: SparkSession, osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double): DataFrame = {
-    val relation_content = Relation.makeRelationsContent(osm)
-
+  private def extract(spark: SparkSession, relation_content: DataFrame, left: Double, top: Double, right: Double, bottom: Double): (DataFrame, DataFrame, DataFrame) = {
     //The extract step - mark all nodes that fit the bounding box
     val nodes = relation_content.filter(col("TYPE") === OsmEntity.NODE && col("LON") >= left && col("LON") <= right && col("LAT") >= bottom && col("LAT") <= top).cache()
 
     //Mandatory way step - get all ways, matching selected nodes
     val nodes_ids = nodes.select("ID").collect().map(_.getAs[Long]("ID")).toSet
     val nodes_ids_bc = spark.sparkContext.broadcast(nodes_ids)
-    val ways = relation_content.filter(col("TYPE") === OsmEntity.NODE).filter(row => Option(row.getAs[Seq[Long]]("WAY")).exists(_.exists(nodes_ids_bc.value.contains(_))))
+    val ways = relation_content.filter(col("TYPE") === OsmEntity.WAY).filter(row => Option(row.getAs[Seq[Long]]("WAY")).exists(_.exists(nodes_ids_bc.value.contains(_))))
 
     //Mandatory relation step - get all relations, mentioning selected ways or nodes
     val ways_ids = ways.select("ID").collect().map(_.getAs[Long]("ID")).toSet
@@ -82,7 +77,7 @@ object Extract {
       val way_match = Option(row.getAs[Seq[Long]]("RELATION_WAYS")).exists(_.exists(ways_ids_bc.value.contains(_)))
       node_match || way_match
     })
-    nodes.union(ways).union(relations)
+    (nodes, ways, relations)
   }
 
   private def relationChildList(relations: Map[Long, Seq[Long]])(id: Long):Seq[Long] = {
@@ -113,18 +108,42 @@ object Extract {
     relations_with_kids
   }
 
-  def apply(osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double, policy: ExtractPolicy = Simple, spark: SparkSession): DataFrame = {
-    val extracted_relations = extract(spark, osm, left, top, right, bottom)
+  private def extractReferencedRelations(relations: DataFrame, osm: DataFrame, policy: ExtractPolicy, spark: SparkSession): DataFrame = {
+    val parents = if (policy == ParentRelations) {
+      val parentIndex = Relation.makeRelationParentIndex(osm).map(identity)
+      val parentIndex_bc = spark.sparkContext.broadcast(parentIndex)
 
-    /*val relationsHierarchy = if (policy == ReferenceComplete || policy == ParentRelations) {
+      def parentMapper(id:Long):Option[Seq[Long]] = parentIndex_bc.value.get(id)
+      val parentMapperUdf = udf(parentMapper _)
+
+      val parentsIds = relations.select("ID")
+        .withColumn("PARENTS", parentMapperUdf(col("ID")))
+        .withColumn("PARENT", explode(col("PARENTS")))
+        .select("PARENT").collect()
+        .map(_.getAs[Long]("PARENT"))
+        .toSet
+      val parentsIds_bc = spark.sparkContext.broadcast(parentsIds)
+
+      osm.filter(col("TYPE") === OsmEntity.RELATION).filter(row => parentsIds_bc.value.contains(row.getAs[Long]("ID"))).union(relations)
+    } else {
+      relations
+    }
+    parents
+  }
+
+  def apply(osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double, policy: ExtractPolicy = Simple, spark: SparkSession): DataFrame = {
+    val relation_content = Relation.makeRelationsContent(osm)
+
+    val (extracted_nodes, extracted_ways, extracted_relations) = extract(spark, relation_content, left, top, right, bottom)
+
+    val referencedRelations = if (policy == ReferenceComplete || policy == ParentRelations) {
       //Do handling
-      //markDescendantRelations(spark, relationsHierarchy, policy)
-      extracted_relations
+      extractReferencedRelations(extracted_relations, relation_content, policy, spark).union(extracted_relations)
     } else {
       extracted_relations
     }
 
-    val referencedRelations = if (policy == CompleteRelations || policy == ReferenceComplete || policy == ParentRelations) {
+    /*val referencedRelations = if (policy == CompleteRelations || policy == ReferenceComplete || policy == ParentRelations) {
       relationsHierarchy
     } else {
       relationsHierarchy
@@ -139,6 +158,6 @@ object Extract {
 
     completeWays.filter(col("USE_NODES") || col("USE_WAYS") || col("USE_RELATIONS"))
       .drop("USE_NODES", "USE_WAYS", "USE_RELATIONS")*/
-    extracted_relations
+    extracted_nodes.union(extracted_ways).union(referencedRelations)
   }
 }

@@ -1,9 +1,10 @@
 package org.akashihi.osm.spark
 
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.functions.{col, lit, udf}
 
 import scala.collection.mutable
+import scala.collection.parallel.{ParIterable, ParSeq}
 
 object Relation {
   /**
@@ -20,6 +21,14 @@ object Relation {
   }
   private def relationMemberIdByTypeUdf = udf(relationMemberIdByType _)
 
+  private def findNextParent(id: Long, invertedMembers: Map[Long, ParIterable[Long]]):ParIterable[Long] = {
+    if (invertedMembers.contains(id)) {
+      invertedMembers(id).flatMap(p => findNextParent(p, invertedMembers))
+    } else {
+      ParSeq(id)
+    }
+  }
+
   /**
    * Adds relations member information to the dataframe.
    * Will add 3 new columns: RELATION_NODES, RELATION_WAYS, RELATION_RELATIONS
@@ -33,5 +42,39 @@ object Relation {
     osm.withColumn("RELATION_NODES", relationMemberIdByTypeUdf(col("RELATION"), lit(OsmEntity.NODE)))
       .withColumn("RELATION_WAYS", relationMemberIdByTypeUdf(col("RELATION"), lit(OsmEntity.WAY)))
       .withColumn("RELATION_RELATIONS", relationMemberIdByTypeUdf(col("RELATION"), lit(OsmEntity.RELATION)))
+  }
+
+  /**
+   * Maps hierarchical relations and their top-most parent. The key is a relation id and value
+   * will be it's parent. If relation id doesn't present as key in that index it could mean that relation either is not a
+   * hierarchical relation or have no further parents. Relation may participate in several different hierarchies and, therefore,
+   * have more than one parent.
+   * @param osm OSM schema data frame.
+   * @return Map of relation IDs and their top-most parent's IDs
+   */
+  def makeRelationParentIndex(osm: DataFrame): Map[Long, Seq[Long]] = {
+    val withContent = if (osm.schema.fields.map(_.name).contains("RELATION_RELATIONS")) {
+      osm
+    } else {
+      makeRelationsContent(osm)
+    }
+
+    val members = withContent.filter(col("TYPE") === OsmEntity.RELATION)
+      .filter(size(col("RELATION_RELATIONS"))>0)
+      .select("ID", "RELATION_RELATIONS")
+      .collect()
+      .map(row => (row.getAs[Long]("ID"), row.getAs[Seq[Long]]("RELATION_RELATIONS")))
+      .toMap
+
+    val invertedMembers = members.par
+      .flatMap { case (rel, members) => members.map(member => (member, rel)) }
+      .groupBy(_._1)
+      .mapValues(_.values).seq.toMap
+
+    val topParents = invertedMembers.mapValues(parents =>
+        parents.flatMap(p => findNextParent(p, invertedMembers))
+    )
+
+    topParents.mapValues(_.seq.toList).seq
   }
 }
