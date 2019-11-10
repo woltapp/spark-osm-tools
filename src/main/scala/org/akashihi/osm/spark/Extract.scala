@@ -1,8 +1,7 @@
 package org.akashihi.osm.spark
 
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.storage.StorageLevel
+import org.apache.spark.sql._
 
 import scala.annotation.tailrec
 import scala.collection.mutable
@@ -67,32 +66,23 @@ object Extract {
     val relation_content = Relation.makeRelationsContent(osm)
 
     //The extract step - mark all nodes that fit the bounding box
-    val extracted = relation_content.withColumn("USE_NODES", when(col("TYPE") === OsmEntity.NODE && col("LON") >= left && col("LON") <= right && col("LAT") >= bottom && col("LAT") <= top, lit(true)).otherwise(lit(false)))
+    val nodes = relation_content.filter(col("TYPE") === OsmEntity.NODE && col("LON") >= left && col("LON") <= right && col("LAT") >= bottom && col("LAT") <= top).cache()
 
     //Mandatory way step - get all ways, matching selected nodes
-    val nodes = extracted.filter("USE_NODES").select("ID").withColumnRenamed("ID", "NODE_ID").cache()
-    val extracted_ways = extracted.join(nodes, valueInArrayUdf(col("WAY"), col("NODE_ID")) || valueInArrayUdf(col("RELATION_NODES"), col("NODE_ID")), "leftouter")
-      .withColumn("USE_WAYS", col("NODE_ID").isNotNull).persist(StorageLevel.MEMORY_AND_DISK)
+    val nodes_ids = nodes.select("ID").collect().map(_.getAs[Long]("ID")).toSet
+    val nodes_ids_bc = spark.sparkContext.broadcast(nodes_ids)
+    val ways = relation_content.filter(col("TYPE") === OsmEntity.NODE).filter(row => Option(row.getAs[Seq[Long]]("WAY")).exists(_.exists(nodes_ids_bc.value.contains(_))))
 
     //Mandatory relation step - get all relations, mentioning selected ways or nodes
-    /*val relation_nodes = mapMembersToRelations(osm, OsmEntity.NODE).map(identity)
-    val relation_ways = mapMembersToRelations(osm, OsmEntity.WAY).map(identity)
+    val ways_ids = ways.select("ID").collect().map(_.getAs[Long]("ID")).toSet
+    val ways_ids_bc = spark.sparkContext.broadcast(ways_ids)
 
-    val relation_nodes_bc = spark.sparkContext.broadcast(relation_nodes)
-    val relation_ways_bc = spark.sparkContext.broadcast(relation_ways)
-    val relationMatcher = matchRelationByMember(relation_nodes_bc.value, relation_ways_bc.value) _
-    val relationMatcherUdf = udf(relationMatcher)
-    val selectedRelations = extracted_ways.filter(col("TYPE") =!= OsmEntity.RELATION)
-      .filter(col("USE_WAYS") || col("USE_NODES"))
-      .select("ID", "TYPE")
-      .withColumn("SELECTED_RELATIONS", relationMatcherUdf(col("ID"), col("TYPE")))
-      .select("SELECTED_RELATIONS")
-      .collect().par.flatMap(_.getAs[Seq[Long]]("SELECTED_RELATIONS")).distinct.seq.toList
-
-    val selectedRelationsBc = spark.sparkContext.broadcast(selectedRelations)
-    extracted_ways.withColumn("USE_RELATIONS", col("TYPE") === OsmEntity.RELATION && col("ID").isInCollection(selectedRelationsBc.value))
-      .drop("NODE_ID")*/
-    extracted_ways
+    val relations = relation_content.filter(col("TYPE") === OsmEntity.RELATION).filter(row => {
+      val node_match = Option(row.getAs[Seq[Long]]("RELATION_NODES")).exists(_.exists(nodes_ids_bc.value.contains(_)))
+      val way_match = Option(row.getAs[Seq[Long]]("RELATION_WAYS")).exists(_.exists(ways_ids_bc.value.contains(_)))
+      node_match || way_match
+    })
+    nodes.union(ways).union(relations)
   }
 
   private def relationChildList(relations: Map[Long, Seq[Long]])(id: Long):Seq[Long] = {
@@ -125,11 +115,6 @@ object Extract {
 
   def apply(osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double, policy: ExtractPolicy = Simple, spark: SparkSession): DataFrame = {
     val extracted_relations = extract(spark, osm, left, top, right, bottom)
-    //********* debug purposes
-    //extracted_relations.write.parquet("/tmp/sot-extract")
-    //extracted_relations.explain()
-    //val extracted_relations = spark.read.parquet("/tmp/sot-extract")
-    //********* debug purposes
 
     /*val relationsHierarchy = if (policy == ReferenceComplete || policy == ParentRelations) {
       //Do handling
