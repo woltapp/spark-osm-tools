@@ -9,55 +9,16 @@ import scala.collection.mutable
 object Extract {
 
   sealed trait ExtractPolicy
+
   case object Simple extends ExtractPolicy
+
   case object CompleteWays extends ExtractPolicy
+
   case object CompleteRelations extends ExtractPolicy
+
   case object ReferenceComplete extends ExtractPolicy
+
   case object ParentRelations extends ExtractPolicy
-
-  /**
-   * Extracts relation member IDs with the specified from the list of all the relation members.
-   *
-   * @param relation    List of all the relations members.
-   * @param entity_type OSM entity type of member to extract.
-   * @return List of relation members IDs with the specified OSM entity type.
-   */
-  private def relationMemberIdByType(relation: mutable.WrappedArray[Row], entity_type: Int): Option[mutable.WrappedArray[Long]] = {
-    Option(relation).map(_.filter(_.getAs[Int]("TYPE") == entity_type).map(_.getAs[Long]("ID")))
-  }
-  private def relationMemberIdByTypeUdf = udf(relationMemberIdByType _)
-
-  /**
-   * Extracts relation members ID, filtering them by type.
-   *
-   * @param osm         OSM dataframe with relations to process.
-   * @param entity_type OSM entity type to filter.
-   * @return Map with relation IDs as keys and their members lists, filtered by OSM entity type, as values.
-   */
-  private def getRelationMembersList(osm: DataFrame, entity_type: Int): Map[Long, Seq[Long]] = osm.filter(col("TYPE") === OsmEntity.RELATION)
-    .select("ID", "RELATION")
-    .withColumn("REL_MEMBERS", relationMemberIdByTypeUdf(col("RELATION"), lit(entity_type)))
-    .filter(size(col("REL_MEMBERS")) > 0)
-    .collect()
-    .par.map(row => (row.getAs[Long]("ID"), row.getAs[Seq[Long]]("REL_MEMBERS"))).seq.toMap
-
-  /**
-   * Build a map of all the relations, mentioning member of a type.
-   *
-   * @param osm         OSM dataframe with relations to process
-   * @param entity_type OSM entity type to filter.
-   * @return Map with entity IDs as keys and list of relations, mentioning them, as values. So it is just inverted getRelationMembersList
-   */
-  private def mapMembersToRelations(osm: DataFrame, entity_type: Int): Map[Long, List[Long]] = getRelationMembersList(osm, entity_type).par
-    .flatMap { case (rel, members) => members.map(member => (member, rel)) }
-    .groupBy(_._1)
-    .mapValues(_.values.seq.toList).seq.toMap
-
-
-  private def matchRelationByMember(nodes: Map[Long, Seq[Long]], ways: Map[Long, Seq[Long]])(id: Long, entity_type: Int): Seq[Long] = entity_type match {
-    case OsmEntity.NODE => nodes.getOrElse(id, Seq[Long]())
-    case OsmEntity.WAY => ways.getOrElse(id, Seq[Long]())
-  }
 
   private def extract(spark: SparkSession, relation_content: DataFrame, left: Double, top: Double, right: Double, bottom: Double): (DataFrame, DataFrame, DataFrame) = {
     //The extract step - mark all nodes that fit the bounding box
@@ -80,55 +41,36 @@ object Extract {
     (nodes, ways, relations)
   }
 
-  private def relationChildList(relations: Map[Long, Seq[Long]])(id: Long):Seq[Long] = {
-    @tailrec
-    def iterateRelation(relation: Seq[Long], siblings: Seq[Long]):Seq[Long] = {
-      relations.get(id) match {
-        case None => siblings
-        case Some(sibling) => iterateRelation(sibling.tail, siblings :+ sibling.head)
-      }
-    }
+  private def filterRelationsByIndex(relations: DataFrame, osm: DataFrame, index: Map[Long, Seq[Long]], spark: SparkSession): DataFrame = {
+    val index_bx = spark.sparkContext.broadcast(index)
 
-    relations.get(id).map(iterateRelation(_, Seq[Long](id))).getOrElse(Seq[Long]())
-  }
+    def indexMapper(id: Long): Option[Seq[Long]] = index_bx.value.get(id)
 
-  private def markDescendantRelations(spark: SparkSession, osm: DataFrame, policy: ExtractPolicy): DataFrame = {
-    val relation_relations = getRelationMembersList(osm, OsmEntity.RELATION).map(identity).filter { case (_, v) => v.nonEmpty }
-    val relation_relations_bc = spark.sparkContext.broadcast(relation_relations)
+    val indexMapperUdf = udf(indexMapper _)
 
-    val relationChildListBc = relationChildList(relation_relations_bc.value) _
-    val relationChildListUdf = udf(relationChildListBc)
+    val selectedIds = relations.select("ID")
+      .withColumn("PARENTS", indexMapperUdf(col("ID")))
+      .withColumn("PARENT", explode(col("PARENTS")))
+      .select("PARENT").collect()
+      .map(_.getAs[Long]("PARENT"))
+      .toSet
+    val selectedIds_bc = spark.sparkContext.broadcast(selectedIds)
 
-    val relations_with_kids = osm.filter(col("TYPE") === OsmEntity.RELATION)
-      .withColumn("RELATION_KIDS", relationChildListUdf(col("ID")))
-    relations_with_kids
-      .filter(size(col("RELATION_KIDS"))>0)
-      .show(false)
-    throw new RuntimeException("stop")
-    relations_with_kids
+    osm.filter(col("TYPE") === OsmEntity.RELATION).filter(row => selectedIds_bc.value.contains(row.getAs[Long]("ID")))
   }
 
   private def extractReferencedRelations(relations: DataFrame, osm: DataFrame, policy: ExtractPolicy, spark: SparkSession): DataFrame = {
+    val relationsMembers = Relation.getRelationsDescendants(osm)
     val parents = if (policy == ParentRelations) {
-      val parentIndex = Relation.makeRelationParentIndex(osm).map(identity)
-      val parentIndex_bc = spark.sparkContext.broadcast(parentIndex)
-
-      def parentMapper(id:Long):Option[Seq[Long]] = parentIndex_bc.value.get(id)
-      val parentMapperUdf = udf(parentMapper _)
-
-      val parentsIds = relations.select("ID")
-        .withColumn("PARENTS", parentMapperUdf(col("ID")))
-        .withColumn("PARENT", explode(col("PARENTS")))
-        .select("PARENT").collect()
-        .map(_.getAs[Long]("PARENT"))
-        .toSet
-      val parentsIds_bc = spark.sparkContext.broadcast(parentsIds)
-
-      osm.filter(col("TYPE") === OsmEntity.RELATION).filter(row => parentsIds_bc.value.contains(row.getAs[Long]("ID"))).union(relations)
+      val parentIndex = Relation.makeRelationParentIndex(osm, relationsMembers).map(identity)
+      filterRelationsByIndex(relations, osm, parentIndex, spark).union(relations)
     } else {
       relations
     }
-    parents
+    val childrenIndex = Relation.makeRelationChildrenIndex(osm, relationsMembers).map(identity)
+    val children = filterRelationsByIndex(relations, osm, childrenIndex, spark)
+
+    parents.union(children).dropDuplicates("ID", "TYPE")
   }
 
   def apply(osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double, policy: ExtractPolicy = Simple, spark: SparkSession): DataFrame = {
