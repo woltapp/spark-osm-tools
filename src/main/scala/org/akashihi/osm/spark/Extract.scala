@@ -42,10 +42,9 @@ object Extract {
   }
 
   private def filterRelationsByIndex(relations: DataFrame, osm: DataFrame, index: Map[Long, Seq[Long]], spark: SparkSession): DataFrame = {
-    val index_bx = spark.sparkContext.broadcast(index)
+    val index_bc = spark.sparkContext.broadcast(index)
 
-    def indexMapper(id: Long): Option[Seq[Long]] = index_bx.value.get(id)
-
+    def indexMapper(id: Long): Option[Seq[Long]] = index_bc.value.get(id)
     val indexMapperUdf = udf(indexMapper _)
 
     val selectedIds = relations.select("ID")
@@ -79,19 +78,36 @@ object Extract {
     val (extracted_nodes, extracted_ways, extracted_relations) = extract(spark, relation_content, left, top, right, bottom)
 
     val referencedRelations = if (policy == ReferenceComplete || policy == ParentRelations) {
-      //Do handling
       extractReferencedRelations(extracted_relations, relation_content, policy, spark).union(extracted_relations)
     } else {
       extracted_relations
     }
 
-    /*val referencedRelations = if (policy == CompleteRelations || policy == ReferenceComplete || policy == ParentRelations) {
-      relationsHierarchy
+    val (completeNodes, completeWays) = if (policy == CompleteRelations || policy == ReferenceComplete || policy == ParentRelations) {
+      val referencedNodes = referencedRelations.filter(col("TYPE") === OsmEntity.RELATION)
+          .filter(size(col("RELATION_NODES")) > 0)
+          .select("RELATION_NODES")
+          .withColumn("NODES", explode(col("RELATION_NODES")))
+          .select("NODES").distinct()
+          .collect().map(_.getAs[Long]("NODES")).toSet
+
+      val referencedWays = referencedRelations.filter(col("TYPE") === OsmEntity.RELATION)
+        .filter(size(col("RELATION_WAYS")) > 0)
+        .select("RELATION_WAYS")
+        .withColumn("WAYS", explode(col("RELATION_WAYS")))
+        .select("WAYS").distinct()
+        .collect().map(_.getAs[Long]("WAYS")).toSet
+
+      val referencedNodes_bc = spark.sparkContext.broadcast(referencedNodes)
+      val referencedWays_bc = spark.sparkContext.broadcast(referencedWays)
+      val selectedNodes = relation_content.filter(col("TYPE") === OsmEntity.NODE).filter(row => referencedNodes_bc.value.contains(row.getAs[Long]("ID"))).union(extracted_nodes).dropDuplicates("ID", "TYPE")
+      val selectedWays = relation_content.filter(col("TYPE") === OsmEntity.WAY).filter(row => referencedWays_bc.value.contains(row.getAs[Long]("ID"))).union(extracted_ways).dropDuplicates("ID", "TYPE")
+      (selectedNodes, selectedWays)
     } else {
-      relationsHierarchy
+      (extracted_nodes, extracted_ways)
     }
 
-    val completeWays = if (policy != Simple) {
+    /*val completeWays = if (policy != Simple) {
       //Do handlind
       referencedRelations
     } else {
@@ -100,6 +116,6 @@ object Extract {
 
     completeWays.filter(col("USE_NODES") || col("USE_WAYS") || col("USE_RELATIONS"))
       .drop("USE_NODES", "USE_WAYS", "USE_RELATIONS")*/
-    extracted_nodes.union(extracted_ways).union(referencedRelations)
+    completeNodes.union(completeWays).union(referencedRelations)
   }
 }
