@@ -1,5 +1,6 @@
 package org.akashihi.osm.spark
 
+import org.apache.log4j.Logger
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{DataFrame, Row}
 
@@ -7,6 +8,8 @@ import scala.collection.mutable
 import scala.collection.parallel.{ParIterable, ParSeq}
 
 object Relation {
+  private val log = Logger.getLogger(getClass.getName)
+
   /**
    * Extracts relation member IDs with the specified from the list of all the relation members.
    *
@@ -26,19 +29,29 @@ object Relation {
 
   private def relationMemberIdByTypeUdf = udf(relationMemberIdByType _)
 
-  private def findNextParent(id: Long, invertedMembers: Map[Long, ParIterable[Long]]): ParIterable[Long] = {
-    if (invertedMembers.contains(id)) {
-      invertedMembers(id).flatMap(p => findNextParent(p, invertedMembers))
+  private def findNextParent(id: Long, invertedMembers: Map[Long, ParIterable[Long]], seen: Set[Long] = Set[Long]()): ParIterable[Long] = {
+    if (seen.contains(id)) {
+      log.warn(s"Found cyclic relation with id $id")
+      ParSeq()
     } else {
-      ParSeq(id)
+      if (invertedMembers.contains(id)) {
+        invertedMembers(id).flatMap(p => findNextParent(p, invertedMembers, seen + id))
+      } else {
+        ParSeq(id)
+      }
     }
   }
 
-  private def expandKids(kid: Long, members: Map[Long, Seq[Long]]): Seq[Long] = {
-    if (members.contains(kid)) {
-      Seq(kid) ++ members(kid).flatMap(k => expandKids(k, members))
+  private def expandKids(kid: Long, members: Map[Long, Seq[Long]], seen: Set[Long] = Set[Long]()): Seq[Long] = {
+    if (seen.contains(kid)) {
+      log.warn(s"Found cyclic relation with id $kid")
+      Seq()
     } else {
-      Seq(kid)
+      if (members.contains(kid)) {
+        Seq(kid) ++ members(kid).flatMap(k => expandKids(k, members, seen + kid))
+      } else {
+        Seq(kid)
+      }
     }
   }
 
