@@ -18,21 +18,9 @@ object Merge {
    * Merges several OSM datasets into single one.
    *
    * @param osm Datasets to merge, shouldn't be empty.
-   * @param strict Duplicates objects removal policy.
-   *               If set to 'true', only exactly matching objects will be removed.
-   *               For example. if you are merging two datasets containing objects from different changes sets
-   *               with same ID but different values for tags for example, strict removal policy will keep
-   *               both objects in the resulting datasets.
-   *               'false' value (default) applies relaxed policy - objects with matching ID and TYPE will be removed,
-   *               even if other values of those objects are different.
-   * @return
+   * @return Merged OSM dataset, without duplicate objects.
    */
   def apply(osm: Seq[DataFrame], strict: Boolean = false): DataFrame = {
-    val merged = merge(osm.tail, osm.head)
-    if (strict) {
-      merged.distinct()
-    } else {
-      merged.dropDuplicates("ID", "TYPE")
-    }
+    merge(osm.tail, osm.head).dropDuplicates("ID", "TYPE")
   }
 }
