@@ -65,7 +65,7 @@ object Extract {
       relations
     }
     val childrenIndex = Relation.makeRelationChildrenIndex(osm, relationsMembers).map(identity)
-    val children = filterRelationsByIndex(relations, osm, childrenIndex, spark)
+    val children = filterRelationsByIndex(parents, osm, childrenIndex, spark)
 
     parents.union(children).dropDuplicates("ID", "TYPE")
   }
@@ -105,7 +105,7 @@ object Extract {
     val (extracted_nodes, extracted_ways, extracted_relations) = extract(spark, relation_content, left, top, right, bottom)
 
     val referencedRelations = if (policy == ReferenceComplete || policy == ParentRelations) {
-      extractReferencedRelations(extracted_relations, relation_content, policy, spark).union(extracted_relations)
+      extractReferencedRelations(extracted_relations, relation_content, policy, spark).union(extracted_relations).dropDuplicates("ID", "TYPE")
     } else {
       extracted_relations
     }
