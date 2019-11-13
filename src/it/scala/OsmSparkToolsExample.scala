@@ -1,5 +1,7 @@
+import java.util.Properties
+
 import org.akashihi.osm.spark.OsmSource.OsmSource
-import org.akashihi.osm.spark.{BoundBox, Extract, Merge}
+import org.akashihi.osm.spark.{BoundBox, Extract, Merge, WriteOsmosis}
 import org.apache.spark.sql._
 import org.apache.spark.storage.StorageLevel
 
@@ -34,6 +36,19 @@ object OsmSparkToolsExample {
     extracted.write.mode(SaveMode.Overwrite).parquet(output)
   }
 
+  def writeOsmosis(spark: SparkSession): Unit = {
+    val db = new Properties()
+    db.put("user", "osmium")
+    db.put("password", "osmium")
+    db.put("url", "jdbc:postgresql://localhost:5432/osmium")
+
+    val osm = spark.read
+      .parquet("/tmp/zabovrezsky")
+      .persist(StorageLevel.MEMORY_AND_DISK)
+
+    WriteOsmosis(osm, db)
+  }
+
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder()
@@ -45,5 +60,7 @@ object OsmSparkToolsExample {
     merge(args(0), "/tmp/czech_cities", spark)
 
     extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
+
+    writeOsmosis(spark)
   }
 }
