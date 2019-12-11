@@ -31,9 +31,19 @@ libraryDependencies ++= Seq(
   "org.akashihi.osm" %% "spark-osm-datasource" % "0.2.0",
   "org.locationtech.jts" % "jts-core" % "1.16.1",
   "org.scalatest" %% "scalatest" % "3.0.8" % "it,test",
-  "org.scalactic" %% "scalactic" % "3.0.8" % "it,test"
+  "org.scalactic" %% "scalactic" % "3.0.8" % "it,test",
+  "com.vividsolutions" % "jts" % "1.13" % "it",
+  "org.postgresql" % "postgresql" % "42.2.8"
 )
 
 lazy val root = (project in file("."))
   .configs(IntegrationTest)
   .settings(Defaults.itSettings)
+
+assemblyMergeStrategy in assembly := {
+  case PathList("META-INF", "MANIFEST.MF") => MergeStrategy.discard
+  case PathList("META-INF", "services", "org.apache.hadoop.fs.FileSystem") => MergeStrategy.concat
+  case PathList("META-INF", "services", "org.apache.spark.sql.sources.DataSourceRegister") => MergeStrategy.concat
+  case PathList("META-INF", ps @ _*) => MergeStrategy.discard
+  case x => MergeStrategy.first
+}
