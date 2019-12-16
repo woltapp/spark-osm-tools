@@ -3,8 +3,8 @@ package org.akashihi.osm.spark.render
 import java.io.{File, FileOutputStream}
 
 import org.akashihi.osm.spark.render.symbolizers.Symbolizer
-import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.functions.{col, collect_list, explode, lit, map, udf}
+import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
 
 /**
  * Rendering pipeline.
@@ -19,7 +19,7 @@ object Renderer {
    * @param lon  Longitude in degress of the point to project.
    * @return (X,Y) projected point coordinates.
    */
-  def webMercator(zoom: Int)(lat: Float, lon: Float): (Long, Long) = {
+  def webMercator(zoom: Int)(lat: Double, lon: Double): (Long, Long) = {
     val multiplier = 256.0 / (Math.PI * 2) * Math.pow(2, zoom)
 
     val x = multiplier * (Math.toRadians(lon) + Math.PI)
@@ -28,28 +28,12 @@ object Renderer {
   }
 
   /**
-   * Checks if point could be projected using web mercator
-   *
-   * @param point (Lon, Lat) point coordinats in WGS84
-   * @return Tru if point can be projected, false otherwise
-   */
-  def webMercatorValidGeometry(point: (Float, Float)): Boolean = point._2 >= -85.0511 && point._2 <= 85.0511 && point._1 >= -180 && point._1 <= 180
-
-  /**
    * Checks if geometry could be projected using web mercator
    *
    * @param point Sequence of points, forming geometry.
    * @return Tru if geometry can be projected, false otherwise
    */
-  def webMercatorValidGeometry(point: Seq[(Float, Float)]): Boolean = point.forall(p => webMercatorValidGeometry(p))
-
-  /**
-   * Converts Spark row with coordinates to the tuple
-   *
-   * @param r Row consisting of Lot/Lan pair of type Double
-   * @return (Lat,Lon) tuple.
-   */
-  private def mapPointRowToTuple(r: Row): (Float, Float) = (r.getAs[Double](0).toFloat, r.getAs[Double](1).toFloat)
+  def webMercatorValidGeometry(point: Seq[Seq[Double]]): Boolean = point.forall(point => point.last >= -85.0511 && point.last <= 85.0511 && point.head >= -180 && point.head <= 180)
 
   /**
    * Projects point to the web mercator plane using specified zoom level
@@ -58,7 +42,7 @@ object Renderer {
    * @param r    Point wrapped into row of lon and lat as double
    * @return (X,Y) Point coordinates projected to the zoom plane
    */
-  private def pointProject(zoom: Int, r: Row): Option[(Long, Long)] = Option(r).map(mapPointRowToTuple).map { p => webMercator(zoom)(p._2, p._1) }
+  private def pointProject(zoom: Int, r: Seq[Double]): Option[(Long, Long)] = Option(r).map { p => webMercator(zoom)(p.last, p.head) }
 
   /**
    * Projects geometry points to the web mercator plane using specified zoom level
@@ -67,7 +51,7 @@ object Renderer {
    * @param g    Sequence of geometry points wrapped into rows of lon and lat as double
    * @return Sequence of (X,Y) point coordinates projected to the zoom plane ordered same way as g Sequence
    */
-  private def geometryProject(zoom: Int, g: Seq[Row]): Seq[(Long, Long)] = {
+  private def geometryProject(zoom: Int, g: Seq[Seq[Double]]): Seq[(Long, Long)] = {
     val points = g.map(p => pointProject(zoom, p))
     if (points.exists(_.isEmpty)) {
       Seq[(Long, Long)]()
@@ -125,7 +109,7 @@ object Renderer {
   def apply(symbols: DataFrame, zoomLevels: Seq[Int], target: String): Unit = {
 
     // Drop non-projectable geometry
-    val geometryValidator = udf((g: Seq[Row]) => webMercatorValidGeometry(g.map(mapPointRowToTuple)))
+    val geometryValidator = udf(webMercatorValidGeometry _)
     val validGeometry = symbols.filter(geometryValidator(col("geometry")))
 
     // Add zoom levels and project
