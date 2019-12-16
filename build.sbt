@@ -32,7 +32,7 @@ libraryDependencies ++= Seq(
   "org.locationtech.jts" % "jts-core" % "1.16.1",
   "org.scalatest" %% "scalatest" % "3.0.8" % "it,test",
   "org.scalactic" %% "scalactic" % "3.0.8" % "it,test",
-  "com.vividsolutions" % "jts" % "1.13" % "it",
+  "com.vividsolutions" % "jts" % "1.13",
   "org.postgresql" % "postgresql" % "42.2.8"
 )
 
