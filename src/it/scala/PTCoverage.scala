@@ -1,13 +1,12 @@
-import org.akashihi.osm.spark.{Extract, OsmEntity}
 import org.akashihi.osm.spark.OsmSource.OsmSource
+import org.akashihi.osm.spark.render.Renderer
+import org.akashihi.osm.spark.{Extract, OsmEntity}
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel
 import org.locationtech.jts.geom.GeometryFactory
 
 object PTCoverage {
-  private val geometryFactory = new GeometryFactory()
-
   private def haversine(startLon: Double, startLat: Double, endLon: Double, endLat: Double): Double = {
     val R = 6378137d
     val dLat = math.toRadians(endLat - startLat)
@@ -24,9 +23,29 @@ object PTCoverage {
   }
 
   private def meanPoint(geometry: Seq[Seq[Double]]): Seq[Double] = {
-    val lon = geometry.map(_.head).sum/geometry.size.toDouble
-    val lat = geometry.map(_.last).sum/geometry.size.toDouble
+    val lon = geometry.map(_.head).sum / geometry.size.toDouble
+    val lat = geometry.map(_.last).sum / geometry.size.toDouble
     Seq(lon, lat)
+  }
+
+  private def distanceToRenderParameters(distance: Double): Map[String, String] = {
+    val distanceMap = Seq(
+      0 -> "00aaff",
+      100 -> "00ffff",
+      200 -> "00ffaa",
+      300 -> "00ff55",
+      400 -> "1aff00",
+      500 -> "88ff00",
+      600 -> "aaff00",
+      700 -> "BFFF00",
+      800 -> "d0ff00",
+      900 -> "ffff00",
+      1000 -> "ff8800",
+      1500 -> "FF5100",
+      2000 -> "ff0000"
+    )
+    val color = distanceMap.filter(_._1 < distance).lastOption.map(_._2).getOrElse("0000ff")
+    Map("fill" -> "true", "color" -> color, "opacity" -> "0.5")
   }
 
   def main(args: Array[String]): Unit = {
@@ -50,7 +69,7 @@ object PTCoverage {
 
     //Get stops
     val stop_positions = area.filter(col("TYPE") === OsmEntity.NODE).filter(lower(col("TAG")("public_transport")) === "stop_position").select("LON", "LAT")
-      .collect().map(row => (row.getAs[Double]("LON"),row.getAs[Double]("LAT")))
+      .collect().map(row => (row.getAs[Double]("LON"), row.getAs[Double]("LAT")))
 
     //Get buildings
     val way_buildings = area.filter(col("TYPE") === OsmEntity.WAY).filter(lower(col("TAG")("building")).isNotNull)
@@ -78,14 +97,23 @@ object PTCoverage {
       .select("geometry")
 
     //Find buildings mean points
-    val meanPointUdf = udf (meanPoint _)
+    val meanPointUdf = udf(meanPoint _)
     val buildingsMeanPoints = buildingsGeometry.withColumn("MEAN_POINT", meanPointUdf(col("geometry")))
 
     //Find distance to the nearest public transport stop
-    val distanceUdf = udf{ (lon: Double, lat: Double) => stop_positions.map(position => haversine(lon, lat, position._1, position._2)).min}
+    val distanceUdf = udf { (lon: Double, lat: Double) => stop_positions.map(position => haversine(lon, lat, position._1, position._2)).min }
     val buildingsWithDistances = buildingsMeanPoints.withColumn("DISTANCE", distanceUdf(col("MEAN_POINT")(0), col("MEAN_POINT")(1)))
-        .drop("MEAN_POINT")
-    //buildingsWithDistances.show(false)
-    buildingsWithDistances.agg(max(col("DISTANCE"))).show(false)
+      .drop("MEAN_POINT")
+
+    //Symbolize geometry for rendering
+    val distanceToRenderParametersUdf = udf(distanceToRenderParameters _)
+    val symbolized = buildingsWithDistances.withColumn("symbolizer", lit("Polygon")) //Render buildings as polygons
+      .withColumn("layer", lit(0)) //The top most layer
+      .withColumn("zorder", lit(0)) //And top most sub-layer
+      .withColumn("minZoom", lit(13)) //Render only at zoom levels starting from 13
+      .withColumn("parameters", distanceToRenderParametersUdf(col("DISTANCE")))
+
+    //Send it to the rendering pipeline
+    Renderer(symbolized, 13 to 19, "/home/chollya/tiles/public_transport_coverage")
   }
 }
