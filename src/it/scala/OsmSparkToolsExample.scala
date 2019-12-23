@@ -1,13 +1,15 @@
 import java.util.Properties
 
 import org.akashihi.osm.spark.OsmSource.OsmSource
-import org.akashihi.osm.spark.{BoundBox, Extract, Merge, WriteOsmosis}
+import org.akashihi.osm.spark._
+import org.akashihi.osm.spark.geometry.ResolveMultipolygon
 import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel
 
 object OsmSparkToolsExample {
 
-  def merge(sources: String, output: String, spark: SparkSession):Unit = {
+  def merge(sources: String, output: String, spark: SparkSession): Unit = {
     val osmFiles = sources.split(",").map(filename => spark.read
       .option("threads", 6)
       .option("partitions", 8)
@@ -24,12 +26,25 @@ object OsmSparkToolsExample {
     merged.write.mode(SaveMode.Overwrite).parquet(output)
   }
 
-  def extract(source: String, output: String, spark: SparkSession): Unit = {
+  def findBoundary(admin_level: String, ref: String, source: String, output: String, spark: SparkSession): Unit = {
     val osm = spark.read
-        .parquet(source)
+      .parquet(source)
       .persist(StorageLevel.MEMORY_AND_DISK)
 
-    val extracted = Extract(osm, 16.578809,49.212551, 16.595750, 49.205591, Extract.ParentRelations, spark)
+    val zabovreskyBoundary = osm.filter(col("TYPE") === OsmEntity.RELATION)
+      //.filter(lower(col("TAG")("boundary")) === "administrative" && col("TAG")("admin_level") === admin_level && col("TAG")("ref") === ref)
+      .filter(lower(col("TAG")("leisure")) === "park" && col("TAG")("wikidata") === "Q16956611")
+      .cache()
+
+    ResolveMultipolygon(zabovreskyBoundary, osm)
+  }
+
+  def extract(source: String, output: String, spark: SparkSession): Unit = {
+    val osm = spark.read
+      .parquet(source)
+      .persist(StorageLevel.MEMORY_AND_DISK)
+
+    val extracted = Extract(osm, 16.578809, 49.212551, 16.595750, 49.205591, Extract.ParentRelations, spark)
       .persist(StorageLevel.MEMORY_AND_DISK)
     println(s"Extracted osm data bbox: ${BoundBox.findBBox(extracted)}")
 
@@ -57,10 +72,10 @@ object OsmSparkToolsExample {
       .config("spark.executor.memory", "8gb")
       .getOrCreate()
 
-    merge(args(0), "/tmp/czech_cities", spark)
+    //merge(args(0), "/tmp/czech_cities", spark)
+    findBoundary("10", "610470", "/tmp/czech_cities", "/tmp/boundary", spark)
+    //extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
 
-    extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
-
-    writeOsmosis(spark)
+    //writeOsmosis(spark)
   }
 }

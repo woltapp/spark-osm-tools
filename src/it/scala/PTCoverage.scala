@@ -1,4 +1,5 @@
 import org.akashihi.osm.spark.OsmSource.OsmSource
+import org.akashihi.osm.spark.geometry.WayGeometry
 import org.akashihi.osm.spark.render.Renderer
 import org.akashihi.osm.spark.{Extract, OsmEntity}
 import org.apache.spark.sql._
@@ -81,20 +82,7 @@ object PTCoverage {
     val buildings = way_buildings.persist(StorageLevel.MEMORY_AND_DISK)
 
     //Converts buildings to geometry
-    val joinCoordinatesUdf = udf { (lon: Double, lat: Double) => Seq(lon, lat) }
-    val joinMap = udf { values: Seq[Map[Long, Seq[Double]]] => values.flatten.toMap }
-    val repairGeometry = udf { (points: Map[Long, Seq[Double]], nodes: Seq[Long]) => nodes.map(node => points(node)) }
-    val points = area.filter(col("TYPE") === 0).select("ID", "LAT", "LON").cache()
-    val buildingsGeometry = buildings.withColumn("POINT", explode(col("WAY")))
-      .join(points.alias("NODES_F"), col("POINT") === col("NODES_F.ID"), "leftouter")
-      .drop("ID")
-      .withColumn("COORD", joinCoordinatesUdf(col("LON"), col("LAT")))
-      .drop("LAT", "LON")
-      .groupBy("WAY").agg(collect_list(map(col("POINT"), col("COORD"))).as("COORDS"))
-      .withColumn("GEOMETRY_MAP", joinMap(col("COORDS")))
-      .drop("COORDS").cache()
-      .withColumn("geometry", repairGeometry(col("GEOMETRY_MAP"), col("WAY")))
-      .select("geometry")
+    val buildingsGeometry = WayGeometry(buildings, area)
 
     //Find buildings mean points
     val meanPointUdf = udf(meanPoint _)
