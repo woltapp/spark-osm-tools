@@ -8,30 +8,30 @@ import scala.collection.mutable
 
 object ResolveMultipolygon {
   def resolveRings(ways: Seq[Seq[Long]]): Seq[Seq[Long]] = {
-    def formRing(cadidates: mutable.Map[Long, Seq[Seq[Long]]]): Seq[Long] = {
-      val ringFirstWay = cadidates.filter {case (_,v) => v.size == 1}.head
+    def formRing(candidates: mutable.ListBuffer[Seq[Long]]): Seq[Long] = {
+      val ringFirstWay = candidates.head
+      candidates.remove(0)
+      //Check if it is already closed
+      if (ringFirstWay.head == ringFirstWay.last) {
+        return ringFirstWay
+      }
       val ring = mutable.ListBuffer[Long]()
-      ring ++= ringFirstWay._2.head
-      cadidates.remove(ringFirstWay._1)
+      ring ++= ringFirstWay
 
-      while (cadidates.nonEmpty) {
-        val next = cadidates.get(ring.last)
+      while (candidates.nonEmpty) {
+        val next = candidates.find(w => w.head == ring.last || w.last == ring.last)
         if (next.isEmpty) {
           //Broken polygon, stop processing
           return Seq.empty[Long]
         }
-        val nextWays = next.get
-        if (nextWays.size >2 ) {
-          //Broken polygon, stop processing
-          return Seq.empty[Long]
-        }
-        if (nextWays.size == 2) {
-          cadidates.update(ring.last, Seq(nextWays.last))
+        val nextWay = next.get
+        candidates.remove(candidates.indexOf(nextWay))
+        val direcitoned = if (nextWay.head == ring.last) {
+          nextWay
         } else {
-          cadidates.remove(ring.last)
+          nextWay.reverse
         }
-        val nextWay = nextWays.head
-        ring ++= nextWay
+        ring ++= direcitoned.tail
         if (ring.head == ring.last) {
           //Ok, we got ring
           return ring
@@ -40,9 +40,9 @@ object ResolveMultipolygon {
       Seq.empty[Long]
     }
     val rings = mutable.ListBuffer[Seq[Long]]()
-    val waysMap = mutable.Map(ways.groupBy(_.head).toSeq: _*)
-    while (waysMap.nonEmpty) {
-      val nextRing = formRing(waysMap)
+    val mutableWays = ways.to[mutable.ListBuffer]
+    while (mutableWays.nonEmpty) {
+      val nextRing = formRing(mutableWays)
       if (nextRing.isEmpty) {
         //Ring forming failed, return empty reuslt
         return Seq.empty[Seq[Long]]
