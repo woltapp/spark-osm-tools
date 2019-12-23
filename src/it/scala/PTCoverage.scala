@@ -82,7 +82,7 @@ object PTCoverage {
     val buildings = way_buildings.persist(StorageLevel.MEMORY_AND_DISK)
 
     //Converts buildings to geometry
-    val buildingsGeometry = WayGeometry(buildings, area)
+    val buildingsGeometry = WayGeometry(buildings, area).drop("WAY")
 
     //Find buildings mean points
     val meanPointUdf = udf(meanPoint _)

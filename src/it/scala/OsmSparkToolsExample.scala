@@ -11,8 +11,8 @@ object OsmSparkToolsExample {
 
   def merge(sources: String, output: String, spark: SparkSession): Unit = {
     val osmFiles = sources.split(",").map(filename => spark.read
-      .option("threads", 6)
-      .option("partitions", 8)
+      .option("threads", 2)
+      .option("partitions", 12)
       .format(OsmSource.OSM_SOURCE_NAME)
       .load(filename).drop("INFO")
       .persist(StorageLevel.MEMORY_AND_DISK))
@@ -26,23 +26,20 @@ object OsmSparkToolsExample {
     merged.write.mode(SaveMode.Overwrite).parquet(output)
   }
 
-  def findBoundary(admin_level: String, ref: String, source: String, output: String, spark: SparkSession): Unit = {
-    val osm = spark.read
-      .parquet(source)
-      .persist(StorageLevel.MEMORY_AND_DISK)
-
+  def findBoundary(admin_level: String, ref: String, osm: DataFrame, spark: SparkSession): Seq[Seq[Double]] = {
     val zabovreskyBoundary = osm.filter(col("TYPE") === OsmEntity.RELATION)
-      //.filter(lower(col("TAG")("boundary")) === "administrative" && col("TAG")("admin_level") === admin_level && col("TAG")("ref") === ref)
-      .filter(lower(col("TAG")("leisure")) === "park" && col("TAG")("wikidata") === "Q16956611")
+      .filter(lower(col("TAG")("boundary")) === "administrative" && col("TAG")("admin_level") === admin_level && col("TAG")("ref") === ref)
       .cache()
 
-    ResolveMultipolygon(zabovreskyBoundary, osm)
+    ResolveMultipolygon(zabovreskyBoundary, osm).select("geometry").first().getAs[Seq[Seq[Double]]]("geometry")
   }
 
   def extract(source: String, output: String, spark: SparkSession): Unit = {
     val osm = spark.read
       .parquet(source)
       .persist(StorageLevel.MEMORY_AND_DISK)
+
+    val zabovresky = findBoundary("10", "610470", osm, spark)
 
     val extracted = Extract(osm, 16.578809, 49.212551, 16.595750, 49.205591, Extract.ParentRelations, spark)
       .persist(StorageLevel.MEMORY_AND_DISK)
@@ -73,8 +70,7 @@ object OsmSparkToolsExample {
       .getOrCreate()
 
     //merge(args(0), "/tmp/czech_cities", spark)
-    findBoundary("10", "610470", "/tmp/czech_cities", "/tmp/boundary", spark)
-    //extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
+    extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
 
     //writeOsmosis(spark)
   }

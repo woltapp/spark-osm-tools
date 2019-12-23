@@ -30,6 +30,6 @@ object WayGeometry {
       .withColumn("GEOMETRY_MAP", joinMap(col("COORDS")))
       .drop("COORDS").cache()
       .withColumn("geometry", repairGeometry(col("GEOMETRY_MAP"), col("WAY")))
-      .select("geometry")
+      .select("geometry", "WAY")
   }
 }
