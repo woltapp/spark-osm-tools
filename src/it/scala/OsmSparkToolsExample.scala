@@ -41,7 +41,7 @@ object OsmSparkToolsExample {
 
     val zabovresky = findBoundary("10", "610470", osm, spark)
 
-    val extracted = Extract(osm, 16.578809, 49.212551, 16.595750, 49.205591, Extract.ParentRelations, spark)
+    val extracted = Extract(osm, zabovresky, Extract.ParentRelations, spark)
       .persist(StorageLevel.MEMORY_AND_DISK)
     println(s"Extracted osm data bbox: ${BoundBox.findBBox(extracted)}")
 
@@ -69,9 +69,9 @@ object OsmSparkToolsExample {
       .config("spark.executor.memory", "8gb")
       .getOrCreate()
 
-    //merge(args(0), "/tmp/czech_cities", spark)
+    merge(args(0), "/tmp/czech_cities", spark)
     extract("/tmp/czech_cities", "/tmp/zabovrezsky", spark)
 
-    //writeOsmosis(spark)
+    writeOsmosis(spark)
   }
 }

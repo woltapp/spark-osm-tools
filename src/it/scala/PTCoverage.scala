@@ -1,5 +1,5 @@
 import org.akashihi.osm.spark.OsmSource.OsmSource
-import org.akashihi.osm.spark.geometry.WayGeometry
+import org.akashihi.osm.spark.geometry.{ResolveMultipolygon, WayGeometry}
 import org.akashihi.osm.spark.render.Renderer
 import org.akashihi.osm.spark.{Extract, OsmEntity}
 import org.apache.spark.sql._
@@ -66,7 +66,11 @@ object PTCoverage {
       .persist(StorageLevel.MEMORY_AND_DISK)
 
     //Cut to the interest area
-    val area = Extract(osm, 16.578809, 49.212551, 16.595750, 49.205591, Extract.CompleteRelations, spark).persist(StorageLevel.MEMORY_AND_DISK)
+    val zabovreskyBoundary = osm.filter(col("TYPE") === OsmEntity.RELATION)
+      //.filter(lower(col("TAG")("boundary")) === "administrative" && col("TAG")("admin_level") === "10" && col("TAG")("ref") === "610470") //Zabovresky
+      .filter(lower(col("TAG")("boundary")) === "administrative" && col("TAG")("admin_level") === "8" && col("TAG")("ref") === "CZ0642582786") //Brno
+    val zabovreskyPolygon = ResolveMultipolygon(zabovreskyBoundary, osm).select("geometry").first().getAs[Seq[Seq[Double]]]("geometry")
+    val area = Extract(osm, zabovreskyPolygon, Extract.CompleteRelations, spark).persist(StorageLevel.MEMORY_AND_DISK)
 
     //Get stops
     val stop_positions = area.filter(col("TYPE") === OsmEntity.NODE).filter(lower(col("TAG")("public_transport")) === "stop_position").select("LON", "LAT")
@@ -74,7 +78,7 @@ object PTCoverage {
 
     //Get buildings
     val way_buildings = area.filter(col("TYPE") === OsmEntity.WAY).filter(lower(col("TAG")("building")).isNotNull)
-      .filter(col("TAG")("building:ruian:type").isin("6", "7", "8", "11")) //Only valid for Czech Republic, remove filtering for other countries
+      .filter(col("TAG")("building:ruian:type").isin("6", "7", "8", "11") || col("TAG")("building:ruian:type").isNull) //Only valid for Czech Republic, remove filtering for other countries
       .select("WAY")
       .filter(size(col("WAY")) > 2)
       .filter(col("WAY")(0) === col("WAY")(size(col("WAY")) - 1))

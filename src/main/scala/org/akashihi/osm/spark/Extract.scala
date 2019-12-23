@@ -2,6 +2,7 @@ package org.akashihi.osm.spark
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
+import org.locationtech.jts.geom._
 
 object Extract {
 
@@ -17,9 +18,18 @@ object Extract {
 
   case object ParentRelations extends ExtractPolicy
 
-  private def extract(spark: SparkSession, relation_content: DataFrame, left: Double, top: Double, right: Double, bottom: Double): (DataFrame, DataFrame, DataFrame) = {
+  private def extract(spark: SparkSession, relation_content: DataFrame, boundary: Polygon): (DataFrame, DataFrame, DataFrame) = {
+    val envelope = boundary.getEnvelopeInternal
     //The extract step - mark all nodes that fit the bounding box
-    val nodes = relation_content.filter(col("TYPE") === OsmEntity.NODE && col("LON") >= left && col("LON") <= right && col("LAT") >= bottom && col("LAT") <= top).cache()
+    val nodesRect = relation_content.filter(col("TYPE") === OsmEntity.NODE && col("LON") >= envelope.getMinX && col("LON") <= envelope.getMaxX && col("LAT") >= envelope.getMinY && col("LAT") <= envelope.getMaxY).cache()
+
+    val nodes = if (boundary.isRectangle) {
+      nodesRect
+    } else {
+      val geometryFactory = new GeometryFactory()
+      val polygonFilterUdf = udf { (lon: Double, lat: Double) => boundary.contains(geometryFactory.createPoint(new Coordinate(lon, lat)))}
+      nodesRect.filter(polygonFilterUdf(col("LON"), col("LAT")))
+    }
 
     //Mandatory way step - get all ways, matching selected nodes
     val nodes_ids = nodes.select("ID").collect().map(_.getAs[Long]("ID")).toSet
@@ -99,10 +109,78 @@ object Extract {
    * @param spark spark session to use.
    * @return OSM dataframe cropped to the specified bounding box using specified policy.
    */
-  def apply(osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double, policy: ExtractPolicy = Simple, spark: SparkSession): DataFrame = {
+  def apply(osm: DataFrame, left: Double, top: Double, right: Double, bottom: Double, policy: ExtractPolicy, spark: SparkSession): DataFrame = {
+    val points = Seq(
+      Seq(left, top),
+      Seq(right, top),
+      Seq(right, bottom),
+      Seq(left, bottom)
+    )
+    apply(osm, points, policy, spark)
+  }
+
+  /**
+   * Extracts an area from the osm dataset.
+   * @param osm OSM dataframe to work on.
+   * @param coordinates Extraction polygin defined as a sequence of points
+   * @param policy Defines how to to the extract. There are five policies defined:
+   *               - ExtractPolicy.Simple (default) - Will extract only nodes inside of the bbox, ways, referenced by
+   *                 those nodes and relations, referenced by those nodes and ways. Ways that cross edge of the bbox
+   *                 may be left incomplete, relations may be left incomplete.
+   *               - ExtractPolicy.CompleteWays - same as simple plus all nodes, referenced by ways, will be added
+   *                 to the extract, making ways complete. Relations still may be left incomplete.
+   *               - ExtractPolicy.CompleteRelations - same as CompleteWays plus all nodes and ways,
+   *                 referenced by included relations, will be added to the extract, making relations almost complete.
+   *                 All referenced ways will also be complete. Children relations of included relations still be missing.
+   *               - ExtractPolicy.ReferenceComplete - same as CompleteRelations, but also full children hierarchy of
+   *                 included relations will be added to extract, including all the ways and nodes, referenced by
+   *                 children relations. All ways will be complete.
+   *               - ExtractPolicy.ParentRelations - same as ReferenceComplete and also adds all parent relations of
+   *                 included relations and all children of those parents, with their ways and nodes. All ways and
+   *                 relations will be reference complete.
+   *
+   * Simple will produce smallest and most precise extract, while other policies may add more and more data
+   * outside of the bbox area. ReferenceComplete policy is usually enough for any practical use. ParentRelations
+   * may (and will) include a lot of data outside of the bounding box.
+   * @param spark spark session to use.
+   * @return OSM dataframe cropped to the specified bounding box using specified policy.
+   */
+  def apply(osm: DataFrame, coordinates: Seq[Seq[Double]], policy: ExtractPolicy, spark: SparkSession): DataFrame = {
+    val geometryFactory = new GeometryFactory()
+    val polygon = geometryFactory.createPolygon(coordinates.map(point => new Coordinate(point.head, point.last)).toArray)
+    apply(osm, polygon, policy, spark)
+  }
+
+  /**
+   * Extracts an area from the osm dataset.
+   * @param osm OSM dataframe to work on.
+   * @param boundary Extraction polygon object.
+   * @param policy Defines how to to the extract. There are five policies defined:
+   *               - ExtractPolicy.Simple (default) - Will extract only nodes inside of the bbox, ways, referenced by
+   *                 those nodes and relations, referenced by those nodes and ways. Ways that cross edge of the bbox
+   *                 may be left incomplete, relations may be left incomplete.
+   *               - ExtractPolicy.CompleteWays - same as simple plus all nodes, referenced by ways, will be added
+   *                 to the extract, making ways complete. Relations still may be left incomplete.
+   *               - ExtractPolicy.CompleteRelations - same as CompleteWays plus all nodes and ways,
+   *                 referenced by included relations, will be added to the extract, making relations almost complete.
+   *                 All referenced ways will also be complete. Children relations of included relations still be missing.
+   *               - ExtractPolicy.ReferenceComplete - same as CompleteRelations, but also full children hierarchy of
+   *                 included relations will be added to extract, including all the ways and nodes, referenced by
+   *                 children relations. All ways will be complete.
+   *               - ExtractPolicy.ParentRelations - same as ReferenceComplete and also adds all parent relations of
+   *                 included relations and all children of those parents, with their ways and nodes. All ways and
+   *                 relations will be reference complete.
+   *
+   * Simple will produce smallest and most precise extract, while other policies may add more and more data
+   * outside of the bbox area. ReferenceComplete policy is usually enough for any practical use. ParentRelations
+   * may (and will) include a lot of data outside of the bounding box.
+   * @param spark spark session to use.
+   * @return OSM dataframe cropped to the specified bounding box using specified policy.
+   */
+  def apply(osm: DataFrame, boundary: Polygon, policy: ExtractPolicy, spark: SparkSession): DataFrame = {
     val relation_content = Relation.makeRelationsContent(osm)
 
-    val (extracted_nodes, extracted_ways, extracted_relations) = extract(spark, relation_content, left, top, right, bottom)
+    val (extracted_nodes, extracted_ways, extracted_relations) = extract(spark, relation_content, boundary)
 
     val referencedRelations = if (policy == ReferenceComplete || policy == ParentRelations) {
       extractReferencedRelations(extracted_relations, relation_content, policy, spark).union(extracted_relations).dropDuplicates("ID", "TYPE")
