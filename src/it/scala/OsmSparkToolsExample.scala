@@ -1,8 +1,9 @@
 import java.util.Properties
 
+import com.wolt.osm.spark.{BoundBox, Extract, Merge, OsmEntity, WriteOsmosis}
 import com.wolt.osm.spark.OsmSource.OsmSource
-import org.akashihi.osm.spark._
-import org.akashihi.osm.spark.geometry.ResolveMultipolygon
+import com.wolt.osm.spark.geometry.ResolveMultipolygon
+import com.wolt.osm.spark._
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel

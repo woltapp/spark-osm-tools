@@ -1,6 +1,7 @@
-package org.akashihi.osm.spark.geometry
+package com.wolt.osm.spark.geometry
 
-import org.akashihi.osm.spark.OsmEntity
+import com.wolt.osm.spark.OsmEntity
+import com.wolt.osm.spark.OsmEntity
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 

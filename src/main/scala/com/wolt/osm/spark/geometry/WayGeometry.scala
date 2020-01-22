@@ -1,4 +1,4 @@
-package org.akashihi.osm.spark.geometry
+package com.wolt.osm.spark.geometry
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._

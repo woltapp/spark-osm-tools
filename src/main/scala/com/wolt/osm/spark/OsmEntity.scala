@@ -1,4 +1,4 @@
-package org.akashihi.osm.spark
+package com.wolt.osm.spark
 
 /**
  * OSM entity type to integer value encoding.

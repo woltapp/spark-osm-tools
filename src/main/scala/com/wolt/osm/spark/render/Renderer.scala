@@ -1,8 +1,8 @@
-package org.akashihi.osm.spark.render
+package com.wolt.osm.spark.render
 
 import java.io.{File, FileOutputStream}
 
-import org.akashihi.osm.spark.render.symbolizers.Symbolizer
+import com.wolt.osm.spark.render.symbolizers.Symbolizer
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 

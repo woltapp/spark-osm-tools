@@ -1,4 +1,4 @@
-package org.akashihi.osm.spark.render.symbolizers
+package com.wolt.osm.spark.render.symbolizers
 
 import java.awt.Graphics2D
 

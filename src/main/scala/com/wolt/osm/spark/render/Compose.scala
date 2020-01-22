@@ -1,4 +1,4 @@
-package org.akashihi.osm.spark.render
+package com.wolt.osm.spark.render
 
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream

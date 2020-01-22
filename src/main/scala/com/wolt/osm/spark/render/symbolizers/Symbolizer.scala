@@ -1,4 +1,4 @@
-package org.akashihi.osm.spark.render.symbolizers
+package com.wolt.osm.spark.render.symbolizers
 
 import java.awt.{AlphaComposite, Color, Graphics2D, RenderingHints}
 import java.awt.image.BufferedImage

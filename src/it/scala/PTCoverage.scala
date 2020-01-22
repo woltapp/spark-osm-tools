@@ -1,11 +1,10 @@
 import com.wolt.osm.spark.OsmSource.OsmSource
-import org.akashihi.osm.spark.geometry.{ResolveMultipolygon, WayGeometry}
-import org.akashihi.osm.spark.render.Renderer
-import org.akashihi.osm.spark.{Extract, OsmEntity}
+import com.wolt.osm.spark.render.Renderer
+import com.wolt.osm.spark.geometry.{ResolveMultipolygon, WayGeometry}
+import com.wolt.osm.spark.{Extract, OsmEntity}
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.storage.StorageLevel
-import org.locationtech.jts.geom.GeometryFactory
 
 object PTCoverage {
   private def haversine(startLon: Double, startLat: Double, endLon: Double, endLat: Double): Double = {
