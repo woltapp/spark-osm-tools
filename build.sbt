@@ -1,11 +1,11 @@
-organization := "org.akashihi.osm"
-homepage := Some(url("https://github.com/akashihi/spark-osm-datasource"))
-scmInfo := Some(ScmInfo(url("https://github.com/akashihi/spark-osm-datasource"), "git@github.com:akashihi/spark-osm-datasource.git"))
+organization := "com.wolt.osm"
+homepage := Some(url("https://github.com/woltapp/spark-osm-datasource"))
+scmInfo := Some(ScmInfo(url("https://github.com/woltapp/spark-osm-datasource"), "git@github.com:woltapp/spark-osm-datasource.git"))
 developers := List(Developer("akashihi",
   "Denis Chaplygin",
   "akashihi@gmail.com",
   url("https://github.com/akashihi")))
-licenses += ("GPLv3", url("https://www.gnu.org/licenses/gpl-3.0.txt"))
+licenses += ("Apache2", url("https://www.apache.org/licenses/LICENSE-2.0"))
 publishMavenStyle := true
 
 // Add sonatype repository settings
