@@ -1,6 +1,6 @@
 import java.util.Properties
 
-import org.akashihi.osm.spark.OsmSource.OsmSource
+import com.wolt.osm.spark.OsmSource.OsmSource
 import org.akashihi.osm.spark._
 import org.akashihi.osm.spark.geometry.ResolveMultipolygon
 import org.apache.spark.sql._

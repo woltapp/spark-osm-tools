@@ -1,4 +1,4 @@
-import org.akashihi.osm.spark.OsmSource.OsmSource
+import com.wolt.osm.spark.OsmSource.OsmSource
 import org.akashihi.osm.spark.geometry.{ResolveMultipolygon, WayGeometry}
 import org.akashihi.osm.spark.render.Renderer
 import org.akashihi.osm.spark.{Extract, OsmEntity}
