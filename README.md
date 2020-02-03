@@ -1,4 +1,4 @@
-# Spark OSM toold
+# Spark OSM tools
 
 Collection of snippets for OSM data processing.
 
